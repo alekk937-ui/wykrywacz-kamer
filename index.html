@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Wykrywacz Kamer</title>
+    <style>
+        body { margin: 0; background: #111; color: #fff; text-align: center; font-family: sans-serif; }
+        /* Nakładamy wysoki kontrast i czarno-biały filtr, aby odblaski były wyraźniejsze */
+        video { width: 100%; max-width: 600px; filter: contrast(180%) grayscale(100%); margin-top: 20px; border-radius: 8px;}
+        button { margin: 20px; padding: 15px 30px; font-size: 16px; background: #e74c3c; color: white; border: none; border-radius: 5px; cursor: pointer; }
+        .instructions { font-size: 14px; color: #aaa; padding: 0 15px; }
+    </style>
+</head>
+<body>
+    <h2>Wykrywacz Obiektywów</h2>
+    <p class="instructions">Zgaś światło w pomieszczeniu. Szukaj stałych, jasnych punktów (podczerwień) lub rytmicznych błysków reagujących na stroboskop (odbicie szkła obiektywu).</p>
+    
+    <video id="camera" autoplay playsinline></video>
+    <br>
+    <button id="torchBtn">Włącz latarkę (Stroboskop)</button>
+
+    <script>
+        const video = document.getElementById('camera');
+        const torchBtn = document.getElementById('torchBtn');
+        let track = null;
+        let torchOn = false;
+        let strobeInterval = null;
+
+        // Żądanie dostępu do tylnej kamery
+        navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } })
+            .then(stream => {
+                video.srcObject = stream;
+                track = stream.getVideoTracks()[0];
+            })
+            .catch(err => {
+                console.error("Błąd dostępu do kamery:", err);
+                alert("Proszę zezwolić na dostęp do kamery w ustawieniach przeglądarki.");
+            });
+
+        torchBtn.addEventListener('click', () => {
+            if (!track) return;
+            
+            // Sprawdzenie, czy urządzenie pozwala na sterowanie latarką
+            const capabilities = track.getCapabilities();
+            if (!capabilities.torch) {
+                alert("Twoja przeglądarka lub urządzenie nie obsługuje sterowania latarką ze strony WWW. Użyj osobnej aplikacji latarki.");
+                return;
+            }
+
+            if (strobeInterval) {
+                clearInterval(strobeInterval);
+                strobeInterval = null;
+                track.applyConstraints({ advanced: [{ torch: false }] });
+                torchBtn.innerText = "Włącz latarkę (Stroboskop)";
+                torchBtn.style.background = "#e74c3c";
+            } else {
+                torchBtn.innerText = "Wyłącz stroboskop";
+                torchBtn.style.background = "#27ae60";
+                
+                // Miganie latarką co 150ms
+                strobeInterval = setInterval(() => {
+                    torchOn = !torchOn;
+                    track.applyConstraints({ advanced: [{ torch: torchOn }] }).catch(e => console.log(e));
+                }, 150); 
+            }
+        });
+    </script>
+</body>
+</html>
