@@ -3,68 +3,182 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Wykrywacz Kamer</title>
+    <title>Wykrywacz Kamer PRO</title>
     <style>
-        body { margin: 0; background: #111; color: #fff; text-align: center; font-family: sans-serif; }
-        /* Nakładamy wysoki kontrast i czarno-biały filtr, aby odblaski były wyraźniejsze */
-        video { width: 100%; max-width: 600px; filter: contrast(180%) grayscale(100%); margin-top: 20px; border-radius: 8px;}
-        button { margin: 20px; padding: 15px 30px; font-size: 16px; background: #e74c3c; color: white; border: none; border-radius: 5px; cursor: pointer; }
-        .instructions { font-size: 14px; color: #aaa; padding: 0 15px; }
+        body { margin: 0; background: #111; color: #fff; text-align: center; font-family: sans-serif; padding-bottom: 20px; }
+        video { width: 100%; max-width: 600px; filter: contrast(180%) grayscale(100%); margin-top: 10px; border-radius: 8px; background: #000; }
+        
+        .controls { display: flex; flex-direction: column; align-items: center; gap: 15px; margin-top: 20px; }
+        
+        select, button, input[type="range"] {
+            width: 90%;
+            max-width: 400px;
+            padding: 12px;
+            font-size: 16px;
+            border-radius: 5px;
+            border: none;
+        }
+        
+        select { background: #333; color: white; border: 1px solid #555; }
+        button { background: #e74c3c; color: white; font-weight: bold; cursor: pointer; transition: background 0.3s; }
+        button.active { background: #27ae60; }
+        
+        .zoom-container { width: 90%; max-width: 400px; text-align: left; }
+        .zoom-container label { display: block; font-size: 14px; margin-bottom: 5px; color: #aaa; }
+        
+        .instructions { font-size: 13px; color: #888; padding: 15px; line-height: 1.5; text-align: left; max-width: 600px; margin: 0 auto; }
     </style>
 </head>
 <body>
     <h2>Wykrywacz Obiektywów</h2>
-    <p class="instructions">Zgaś światło w pomieszczeniu. Szukaj stałych, jasnych punktów (podczerwień) lub rytmicznych błysków reagujących na stroboskop (odbicie szkła obiektywu).</p>
     
     <video id="camera" autoplay playsinline></video>
-    <br>
-    <button id="torchBtn">Włącz latarkę (Stroboskop)</button>
+    
+    <div class="controls">
+        <select id="cameraSelect">
+            <option value="">Wybierz aparat...</option>
+        </select>
+
+        <div class="zoom-container">
+            <label for="zoomSlider">Zbliżenie (Zoom): <span id="zoomValue">1x</span></label>
+            <input type="range" id="zoomSlider" min="1" max="1" step="0.1" value="1" disabled>
+        </div>
+
+        <button id="torchBtn">Włącz latarkę (Stroboskop)</button>
+    </div>
+
+    <p class="instructions">
+        **Wskazówka:** Aparaty przednie (do selfie) rzadziej posiadają filtry IR, co ułatwia wykrycie diod podczerwieni z ukrytych kamer. Przetestuj różne obiektywy z listy.<br><br>
+        *Uwaga: Funkcje zoomu i latarki zależą od możliwości przeglądarki na Twoim telefonie (np. iOS blokuje część tych funkcji w Safari).*
+    </p>
 
     <script>
         const video = document.getElementById('camera');
+        const cameraSelect = document.getElementById('cameraSelect');
+        const zoomSlider = document.getElementById('zoomSlider');
+        const zoomValue = document.getElementById('zoomValue');
         const torchBtn = document.getElementById('torchBtn');
-        let track = null;
+        
+        let currentTrack = null;
         let torchOn = false;
         let strobeInterval = null;
 
-        // Żądanie dostępu do tylnej kamery
-        navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } })
-            .then(stream => {
+        // Inicjalizacja: pobranie listy kamer
+        async function getCameras() {
+            try {
+                // Aby pobrać nazwy kamer, często potrzebna jest najpierw zgoda na użycie wideo
+                await navigator.mediaDevices.getUserMedia({ video: true });
+                const devices = await navigator.mediaDevices.enumerateDevices();
+                const videoDevices = devices.filter(device => device.kind === 'videoinput');
+                
+                cameraSelect.innerHTML = '';
+                videoDevices.forEach((device, index) => {
+                    const option = document.createElement('option');
+                    option.value = device.deviceId;
+                    option.text = device.label || `Aparat ${index + 1}`;
+                    cameraSelect.appendChild(option);
+                });
+
+                if (videoDevices.length > 0) {
+                    startStream(videoDevices[0].deviceId);
+                }
+            } catch (err) {
+                console.error("Błąd pobierania listy kamer:", err);
+                alert("Aby aplikacja działała, musisz zezwolić na dostęp do aparatu.");
+            }
+        }
+
+        // Uruchamianie konkretnego strumienia wideo
+        async function startStream(deviceId) {
+            if (currentTrack) {
+                currentTrack.stop();
+            }
+
+            // Zatrzymanie stroboskopu przy zmianie obiektywu
+            resetTorch();
+
+            const constraints = {
+                video: {
+                    deviceId: deviceId ? { exact: deviceId } : undefined
+                }
+            };
+
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia(constraints);
                 video.srcObject = stream;
-                track = stream.getVideoTracks()[0];
-            })
-            .catch(err => {
-                console.error("Błąd dostępu do kamery:", err);
-                alert("Proszę zezwolić na dostęp do kamery w ustawieniach przeglądarki.");
-            });
+                currentTrack = stream.getVideoTracks()[0];
+
+                // Krótkie opóźnienie, aby sprzęt zdążył zaraportować swoje możliwości (tzw. capabilities)
+                setTimeout(() => {
+                    const capabilities = currentTrack.getCapabilities();
+                    
+                    // Obsługa Zoomu
+                    if (capabilities.zoom) {
+                        zoomSlider.min = capabilities.zoom.min;
+                        zoomSlider.max = capabilities.zoom.max;
+                        zoomSlider.step = capabilities.zoom.step;
+                        zoomSlider.value = currentTrack.getSettings().zoom || capabilities.zoom.min;
+                        zoomSlider.disabled = false;
+                        zoomValue.innerText = zoomSlider.value + "x";
+                    } else {
+                        zoomSlider.disabled = true;
+                        zoomValue.innerText = "Brak obsługi";
+                    }
+                }, 500);
+
+            } catch (err) {
+                console.error("Błąd uruchamiania kamery:", err);
+            }
+        }
+
+        // Nasłuchiwacze zdarzeń
+        cameraSelect.addEventListener('change', (e) => {
+            startStream(e.target.value);
+        });
+
+        zoomSlider.addEventListener('input', (e) => {
+            if (currentTrack) {
+                const val = parseFloat(e.target.value);
+                zoomValue.innerText = val + "x";
+                currentTrack.applyConstraints({ advanced: [{ zoom: val }] })
+                    .catch(err => console.log("Błąd zoomu:", err));
+            }
+        });
+
+        function resetTorch() {
+            if (strobeInterval) {
+                clearInterval(strobeInterval);
+                strobeInterval = null;
+                torchBtn.innerText = "Włącz latarkę (Stroboskop)";
+                torchBtn.classList.remove('active');
+            }
+        }
 
         torchBtn.addEventListener('click', () => {
-            if (!track) return;
+            if (!currentTrack) return;
             
-            // Sprawdzenie, czy urządzenie pozwala na sterowanie latarką
-            const capabilities = track.getCapabilities();
+            const capabilities = currentTrack.getCapabilities();
             if (!capabilities.torch) {
-                alert("Twoja przeglądarka lub urządzenie nie obsługuje sterowania latarką ze strony WWW. Użyj osobnej aplikacji latarki.");
+                alert("Ten obiektyw lub przeglądarka nie obsługuje wbudowanej latarki.");
                 return;
             }
 
             if (strobeInterval) {
-                clearInterval(strobeInterval);
-                strobeInterval = null;
-                track.applyConstraints({ advanced: [{ torch: false }] });
-                torchBtn.innerText = "Włącz latarkę (Stroboskop)";
-                torchBtn.style.background = "#e74c3c";
+                resetTorch();
+                currentTrack.applyConstraints({ advanced: [{ torch: false }] });
             } else {
                 torchBtn.innerText = "Wyłącz stroboskop";
-                torchBtn.style.background = "#27ae60";
+                torchBtn.classList.add('active');
                 
-                // Miganie latarką co 150ms
                 strobeInterval = setInterval(() => {
                     torchOn = !torchOn;
-                    track.applyConstraints({ advanced: [{ torch: torchOn }] }).catch(e => console.log(e));
+                    currentTrack.applyConstraints({ advanced: [{ torch: torchOn }] }).catch(e => console.log(e));
                 }, 150); 
             }
         });
+
+        // Start aplikacji
+        getCameras();
     </script>
 </body>
 </html>
